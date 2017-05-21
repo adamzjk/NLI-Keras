@@ -24,7 +24,7 @@
 
 ## Resources
 
-​	If you need preprocessed data, well-trained weights, please contract adamzjk@foxmail.com
+​	If you need preprocessed data, compressed GloVe word embeddings, well-trained weights, please contact adamzjk@foxmail.com
 
 
 
