@@ -10,7 +10,7 @@
 
 ## Data
 
-​	I did some preprocessing on the original data and use it to train the neural network, which means you can't run this model directly with the original SNLI database. It is recommended to read the essential code which lies in ``create_xxx_model() methods`` method in file ``tfRNN.py`` and build your own network.
+​	I did some preprocessing on the original data and use it to train the neural network, which means you can't run this model directly with the original SNLI database. It is recommended to read the essential code which lies in ``create_xxx_model()`` method in file ``tfRNN.py`` and build your own network.
 
 ## Attention Visualization
 
@@ -22,11 +22,9 @@
 
 ​	Function ``interactive_predict`` let user input 2 sentences and return 3 probabilities w.r.t. entailment, contradiction and neutral. If ``test_mode`` is set, then the attention visualization heatmap will also be saved as file.
 
+## Resources
 
-
-
-
-
+​	If you need preprocessed data, well-trained weights, please contract adamzjk@foxmail.com
 
 
 
