@@ -362,11 +362,9 @@ class AttentionAlignmentModel:
     embed_h = self.Embed(hypothesis)  # [batchsize, Hsize, Embedsize]
 
     # 2, Encoder words with its surrounding context
-    Encoder = Bidirectional(LSTM(units=300,
-                                 dropout=self.DropProb,
-                                 return_sequences=True))
-    embed_p = Encoder(embed_p)
-    embed_h = Encoder(embed_h)
+    Encoder = Bidirectional(LSTM(units=300, return_sequences=True))
+    embed_p = Dropout(self.DropProb)(Encoder(embed_p))
+    embed_h = Dropout(self.DropProb)(Encoder(embed_h))
 
     # 2, Score each words and calc score matrix Eph.
     F_p, F_h = embed_p, embed_h
@@ -380,37 +378,26 @@ class AttentionAlignmentModel:
     HypoAlign = keras.layers.Dot((2, 1))([Eh, embed_p]) # [-1, Hsize, dim]
     mm_1 = keras.layers.Multiply()([embed_p, PremAlign])
     mm_2 = keras.layers.Multiply()([embed_h, HypoAlign])
-
-    # ReshapeLayer = Lambda(lambda x: K.reshape(x, (-1, self.SentMaxLen, 600))) # Reshape handles batch_size
-    # sb_1 = ReshapeLayer(embed_p - PremAlign)
-    # sb_2 = ReshapeLayer(embed_h - HypoAlign)
     sb_1 = Lambda(lambda x: tf.subtract(x, PremAlign))(embed_p)
     sb_2 = Lambda(lambda x: tf.subtract(x, HypoAlign))(embed_h)
 
-    PremAlign = keras.layers.Concatenate()([embed_p,
-                                            PremAlign,
-                                            sb_1,
-                                            mm_1,])  # [batch_size, Psize, 2*unit]
-    HypoAlign = keras.layers.Concatenate()([embed_h,
-                                            HypoAlign,
-                                            sb_2,
-                                            mm_2])  # [batch_size, Hsize, 2*unit]
+    PremAlign = keras.layers.Concatenate()([embed_p, PremAlign, sb_1, mm_1,])  # [batch_size, Psize, 2*unit]
+    HypoAlign = keras.layers.Concatenate()([embed_h, HypoAlign, sb_2, mm_2])  # [batch_size, Hsize, 2*unit]
     PremAlign = Dropout(self.DropProb)(PremAlign)
     HypoAlign = Dropout(self.DropProb)(HypoAlign)
     Compresser = TimeDistributed(Dense(300,
                                        kernel_regularizer=l2(self.L2Strength),
-                                       bias_regularizer=l2(self.L2Strength)),
+                                       bias_regularizer=l2(self.L2Strength),
+                                       activation='relu'),
                                  name='Compresser')
     PremAlign = Compresser(PremAlign)
     HypoAlign = Compresser(HypoAlign)
 
     # 5, Final biLST < Encoder + Softmax Classifier
-    Final = Bidirectional(LSTM(units=300,
-                               dropout=self.DropProb,
-                               return_sequences=True),
-                          name='finaldecoer')  # [-1,2*units]
-    final_p = Final(PremAlign)
-    final_h = Final(HypoAlign)
+    Decoder = Bidirectional(LSTM(units=300, return_sequences=True),
+                            name='finaldecoer')  # [-1,2*units]
+    final_p = Dropout(self.DropProb)(Decoder(PremAlign))
+    final_h = Dropout(self.DropProb)(Decoder(HypoAlign))
 
     AveragePooling = Lambda(lambda x: K.mean(x, axis=1)) # outs [-1, dim]
     MaxPooling = Lambda(lambda x: K.max(x, axis=1)) # outs [-1, dim]
@@ -420,11 +407,13 @@ class AttentionAlignmentModel:
     max_h = MaxPooling(final_h)
     Final = keras.layers.Concatenate()([avg_p, max_p, avg_h, max_h])
     Final = Dropout(self.DropProb)(Final)
-    Final = Dense(512, name='dense512', activation='relu')(Final)
-    Final = Dropout(self.DropProb)(Final)
-    Final = Dense(256, name='dense256', activation='relu')(Final)
-    Final = Dropout(self.DropProb)(Final)
-    Final = Dense(3, activation='softmax', name='judge256')(Final)
+    Final = Dense(300,
+                  kernel_regularizer=l2(self.L2Strength),
+                  bias_regularizer=l2(self.L2Strength),
+                  name='dense300',
+                  activation='tanh')(Final)
+    Final = Dropout(self.DropProb / 2)(Final)
+    Final = Dense(3, activation='softmax', name='judge300')(Final)
     self.model = Model(inputs=[premise, hypothesis], outputs=Final)
 
   @time_count
