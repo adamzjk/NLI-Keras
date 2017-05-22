@@ -26,6 +26,12 @@ from keras.layers.recurrent import GRU,LSTM
 from keras.backend.tensorflow_backend import set_session
 from keras.engine.topology import Layer
 
+
+"""
+T T
+"""
+
+
 def time_count(fn):
   # Funtion wrapper used to memsure time consumption
   def _wrapper(*args, **kwargs):
@@ -124,14 +130,14 @@ class AttentionAlignmentModel:
     # 1, Set Basic Model Parameters
     self.Layers = 1
     self.EmbeddingSize = 300
-    self.BatchSize = 256
+    self.BatchSize = 600
     self.Patience = 8
     self.MaxEpoch = 64
-    self.SentMaxLen = 36
-    self.DropProb = 0.25
+    self.SentMaxLen = 64
+    self.DropProb = 0.5
     self.L2Strength = 1e-5
     self.Activate = 'relu'
-    self.Optimizer = 'rmsprop'
+    self.Optimizer = 'adam'
     self.rnn_type = annotation
 
     # 2, Define Class Variables
