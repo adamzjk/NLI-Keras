@@ -124,11 +124,11 @@ class AttentionAlignmentModel:
     # 1, Set Basic Model Parameters
     self.Layers = 1
     self.EmbeddingSize = 300
-    self.BatchSize = 512
+    self.BatchSize = 256
     self.Patience = 8
     self.MaxEpoch = 64
     self.SentMaxLen = 36
-    self.DropProb = 0.2
+    self.DropProb = 0.25
     self.L2Strength = 1e-5
     self.Activate = 'relu'
     self.Optimizer = 'rmsprop'
@@ -422,7 +422,9 @@ class AttentionAlignmentModel:
     Final = Dropout(self.DropProb)(Final)
     Final = Dense(512, name='dense512', activation='relu')(Final)
     Final = Dropout(self.DropProb)(Final)
-    Final = Dense(3, activation='softmax', name='judge')(Final)
+    Final = Dense(256, name='dense256', activation='relu')(Final)
+    Final = Dropout(self.DropProb)(Final)
+    Final = Dense(3, activation='softmax', name='judge256')(Final)
     self.model = Model(inputs=[premise, hypothesis], outputs=Final)
 
   @time_count
