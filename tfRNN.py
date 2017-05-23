@@ -40,89 +40,6 @@ def time_count(fn):
     print("[time_count]: %s cost %fs" % (fn.__name__, time.clock() - start))
   return _wrapper
 
-class BatchCosineMatch(Layer):
-
-  def __init__(self, input_dim, output_dim = 20, **kwargs):
-    self.input_dim = input_dim
-    self.output_dim = output_dim
-    super(BatchCosineMatch, self).__init__(**kwargs)
-
-  def build(self, input_shape):
-    self.W = self.add_weight(shape=(self.output_dim, self.input_dim),
-                             initializer='uniform',
-                             trainable=True)
-    super(BatchCosineMatch, self).build(input_shape)
-
-  def call(self, inputs, **kwargs):
-    v1, v2 = inputs[0], inputs[1] # [-1, inputs_dim]
-    print('v1,v2',v1,v2)
-    v1 = keras.layers.dot([self.W, v1], axes=[1, -1])
-    v2 = keras.layers.dot([self.W, v2], axes=[1, -1])
-    print('v1,v2',v1,v2)
-    return keras.losses.cosine_proximity(v1, v2)
-
-  def compute_output_shape(self, input_shape):
-    return input_shape[0], self.output_dim
-
-
-# class MultiPerspectiveMatching(keras.layers.recurrent):
-#
-#   def __init__(self,
-#                length = 36,
-#                dim = 200,
-#                units = 128,
-#                dropout = 0.1,
-#                sent2 = None,
-#                **kwargs):
-#     '''
-#     :param length: time steps
-#     :param dim:  input dim
-#     :param units: output dim
-#     :param dropout: dropout
-#     '''
-#     self.length = length
-#     self.dim = dim # dim of input[-1]
-#     self.units = units
-#     self.dropout = Dropout(dropout)
-#     self.sent2 = sent2 # shape = [-1, time_length, dim]
-#     super(MultiPerspectiveMatching, self).__init__(**kwargs)
-#
-#   def build(self, input_shape):
-#     self.ScoreF1 = TimeDistributed(BatchCosineMatch(input_dim=self.dim))
-#     self.ScoreF2 = TimeDistributed(BatchCosineMatch(input_dim=self.dim))
-#     super(MultiPerspectiveMatching, self).build(input_shape)
-#
-#   def step(self, inputs, states):
-#     '''
-#     :param inputs: single input, shape = [-1, dim]
-#     :param states: last state, shape = [-1, dim]
-#     :return: outputs, new_states
-#     '''
-#     # def apply_and_dropout(func,x):
-#     #   return self.dropout(func(x))
-#     # # Full Matching
-#     # last_out = self.sent2[:,-1,:]
-#     # full_match =
-#     #
-#     #
-#     # # 1, Soft Attentive Matching
-#     # p_score = apply_and_dropout(self.ScoreF1, sent1) # [-1, p_length, units]
-#     # h_socre = apply_and_dropout(self.ScoreF1, sent2) # [-1, h_length, units]
-#     # p_score = apply_and_dropout(self.ScoreF2, p_score) # [-1, p_length, units]
-#     # h_socre = apply_and_dropout(self.ScoreF2, h_socre) # [-1, h_length, units]
-#     # Eph = keras.layers.dot([p_score, h_socre],axes=(2, 2))  # [-1, p_length, h_length]
-#     # Ep = keras.activations.softmax(Eph)  # [-1, p_length, h_length]
-#     # AlignVec = keras.layers.Dot((2, 1))([Ep, sent2])
-#     #
-#     # # 2, Max Attentive Matching
-#     # tf.argmax()
-#     # K.argmax()
-#
-#   def compute_output_shape(self, input_shape):
-#     return input_shape[0], input_shape[1], self.units
-#
-
-
 
 class AttentionAlignmentModel:
 
@@ -215,7 +132,7 @@ class AttentionAlignmentModel:
                            weights = [embed_matrix])
 
 
-  # TODO this model is reserverd, DO NOT CHANGE!
+  # TODO Decomposable Attention Model by Ankur P. Parikh et al. 2016
   def create_standard_attention_model(self, test_mode = False):
     ''' This model is Largely based on [A Decomposable Attention Model, Ankur et al.] '''
     # 0, (Optional) Set the upper limit of GPU memory
@@ -284,77 +201,8 @@ class AttentionAlignmentModel:
     if test_mode: self.model = Model(inputs=[premise,hypothesis],outputs=[Ep, Eh, final])
     else: self.model = Model(inputs=[premise, hypothesis], outputs=final)
 
-  # TODO Contextual Attention model
-  def create_contextual_attention_model(self, returnEpEh = False):
-    # 0, (Optional) Set the upper limit of GPU memory
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth = True
-    set_session(tf.Session(config=config))
 
-    # 1, Embedding the input and project the embeddings
-    premise = Input(shape=(self.SentMaxLen,), dtype='int32')
-    hypothesis = Input(shape=(self.SentMaxLen,), dtype='int32')
-    embed_p = self.Embed(premise)  # [batchsize, Psize, Embedsize]
-    embed_h = self.Embed(hypothesis)  # [batchsize, Hsize, Embedsize]
-    EmbdProject = TimeDistributed(Dense(200,
-                                        activation='relu',
-                                        kernel_regularizer=l2(self.L2Strength),
-                                        bias_regularizer=l2(self.L2Strength)))
-    embed_p = Dropout(self.DropProb)(EmbdProject(embed_p)) # [batchsize, Psize, units]
-    embed_h = Dropout(self.DropProb)(EmbdProject(embed_h))  # [batchsize, Hsize, units]
-
-    # 2, Encoder words with its surrounding context
-    Encoder = Bidirectional(LSTM(units=200,
-                                 dropout=self.DropProb,
-                                 return_sequences=True))
-    embed_p = Encoder(embed_p)
-    embed_h = Encoder(embed_h)
-
-    # 2, Score each words and calc score matrix Eph.
-    F_p, F_h = embed_p, embed_h
-    for i in range(2):  # Applying Decomposable Score Function
-      scoreF = TimeDistributed(Dense(200,
-                                     activation='relu',
-                                     kernel_regularizer=l2(self.L2Strength),
-                                     bias_regularizer=l2(self.L2Strength)))
-      F_p = Dropout(self.DropProb)(scoreF(F_p))  # [batch_size, Psize, units]
-      F_h = Dropout(self.DropProb)(scoreF(F_h))  # [batch_size, Hsize, units]
-    Eph = keras.layers.Dot(axes=(2, 2))([F_h, F_p])  # [batch_size, Hsize, Psize]
-    Eh = Lambda(lambda x: keras.activations.softmax(x))(Eph)  # [batch_size, Hsize, Psize]
-    Ep = keras.layers.Permute((2, 1))(Eph)  # [batch_size, Psize, Hsize)
-    Ep = Lambda(lambda x: keras.activations.softmax(x))(Ep)  # [batch_size, Psize, Hsize]
-
-    # 4, Normalize score matrix, encoder premesis and get alignment
-    PremAlign = keras.layers.Dot((2, 1))([Ep, embed_h])
-    HypoAlign = keras.layers.Dot((2, 1))([Eh, embed_p])
-    PremAlign = keras.layers.Concatenate()([embed_p, PremAlign]) # [batch_size, Psize, 2*unit]
-    HypoAlign = keras.layers.Concatenate()([embed_h, HypoAlign]) # [batch_size, Hsize, 2*unit]
-    Compresser = TimeDistributed(Dense(200,
-                                       kernel_regularizer=l2(self.L2Strength),
-                                       bias_regularizer=l2(self.L2Strength)),
-                                name='Compresser')
-    PremAlign = Compresser(PremAlign)
-    HypoAlign = Compresser(HypoAlign)
-
-    # 5, Final biLST< Encoder
-    Final = Bidirectional(LSTM(units=200,
-                               dropout=self.DropProb),
-                          name='finaldecoer') # [-1,2*units]
-    final_p = Final(PremAlign)
-    final_h = Final(HypoAlign)
-    Final = keras.layers.Concatenate()([final_p, final_h])
-    for i in range(2):
-      Final = Dense(200, name='3dense_'+str(i),activation='relu')(Final)
-      Final = Dropout(self.DropProb)(Final)
-      Final = BatchNormalization()(Final)
-
-    # 6, Prediction by softmax
-    Final = Dense(3, activation='softmax',name='judge')(Final)
-    if returnEpEh: self.model = Model(inputs=[premise, hypothesis], outputs=[Ep, Eh, Final])
-    else :self.model = Model(inputs=[premise, hypothesis], outputs=Final)
-
-
-    # TODO Enhanced Attention model
+  # TODO Enhanced LSTM Attention model by Qian Chen et al. 2016
   def create_enhanced_attention_model(self):
     # 0, (Optional) Set the upper limit of GPU memory
     config = tf.ConfigProto()
