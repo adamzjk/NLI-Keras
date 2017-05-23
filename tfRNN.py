@@ -49,7 +49,7 @@ class AttentionAlignmentModel:
     self.EmbeddingSize = 300
     self.BatchSize = 600
     self.Patience = 8
-    self.MaxEpoch = 64
+    self.MaxEpoch = 42
     self.SentMaxLen = 64
     self.DropProb = 0.5
     self.L2Strength = 1e-5
@@ -376,8 +376,8 @@ if __name__ == '__main__':
   md.create_enhanced_attention_model()
   md.compile_model()
   # md.label_test_file()
-  md.start_train()
-  #md.evaluate_on_test()
+  # md.start_train()
+  md.evaluate_on_test()
   # md.interactive_predict(test_mode = _test)
 
 
