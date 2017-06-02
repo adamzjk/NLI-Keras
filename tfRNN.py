@@ -1,13 +1,14 @@
 import json
 import os
-import time
 import re
+import time
 import numpy as np
 import tensorflow as tf
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from collections import defaultdict
+from RITutils import f1_score, recall, precision
 
 import keras
 import keras.backend as K
@@ -36,26 +37,28 @@ def time_count(fn):
   # Funtion wrapper used to memsure time consumption
   def _wrapper(*args, **kwargs):
     start = time.clock()
-    fn(*args, **kwargs)
+    returns = fn(*args, **kwargs)
     print("[time_count]: %s cost %fs" % (fn.__name__, time.clock() - start))
+    return returns
   return _wrapper
 
 
 class AttentionAlignmentModel:
 
-  def __init__(self, annotation ='biGRU'):
+  def __init__(self, annotation ='biGRU', dataset = 'snli'):
     # 1, Set Basic Model Parameters
     self.Layers = 1
     self.EmbeddingSize = 300
-    self.BatchSize = 600
+    self.BatchSize = 256
     self.Patience = 8
     self.MaxEpoch = 42
-    self.SentMaxLen = 64
+    self.SentMaxLen = 42
     self.DropProb = 0.5
     self.L2Strength = 1e-5
     self.Activate = 'relu'
     self.Optimizer = 'adam'
     self.rnn_type = annotation
+    self.dataset = dataset
 
     # 2, Define Class Variables
     self.Vocab = 0
@@ -66,19 +69,26 @@ class AttentionAlignmentModel:
     self.Labels = {'contradiction': 0, 'neutral': 1, 'entailment': 2}
     self.rLabels = {0:'contradiction', 1:'neutral', 2:'entailment'}
 
-  @staticmethod
-  def load_data():
-    trn = json.loads(open('train.json', 'r').read())
-    vld = json.loads(open('validation.json', 'r').read())
-    tst = json.loads(open('test.json', 'r').read())
+  def load_data(self):
+    if self.dataset == 'snli':
+      trn = json.loads(open('train.json', 'r').read())
+      vld = json.loads(open('validation.json', 'r').read())
+      tst = json.loads(open('test.json', 'r').read())
+    elif self.dataset == 'rte':
+      trn = json.loads(open('RTE_train.json', 'r').read())
+      vld = json.loads(open('RTE_valid.json', 'r').read())
+      tst = json.loads(open('RTE_test.json', 'r').read())
+    else:
+      raise ValueError('Unknwon Dataset')
 
-    trn[2] = np_utils.to_categorical(trn[2], 3)
-    vld[2] = np_utils.to_categorical(vld[2], 3)
-    tst[2] = np_utils.to_categorical(tst[2], 3)
+    trn[2] = np_utils.to_categorical(trn[2], 3 if self.dataset == 'snli' else 2)
+    vld[2] = np_utils.to_categorical(vld[2], 3 if self.dataset == 'snli' else 2)
+    tst[2] = np_utils.to_categorical(tst[2], 3 if self.dataset == 'snli' else 2)
+
     return trn, vld, tst
 
   @time_count
-  def prep_data(self,fn=('train.json','validation.json','test.json')):
+  def prep_data(self):
     # 1, Read raw Training,Validation and Test data
     self.train,self.validation,self.test = self.load_data()
 
@@ -110,7 +120,7 @@ class AttentionAlignmentModel:
       vec = embed_index.get(word)
       if vec is None: unregistered.append(word)
       else: embed_matrix[i] = vec
-    np.save('GloVe.npy',embed_matrix)
+    np.save('GloVe_' + self.dataset + '.npy',embed_matrix)
     open('unregisterd_word.txt','w').write(str(unregistered))
 
   def load_GloVe_dict(self):
@@ -122,9 +132,9 @@ class AttentionAlignmentModel:
   @time_count
   def prep_embd(self):
     # Add a Embed Layer to convert word index to vector
-    if not os.path.exists('GloVe.npy'):
+    if not os.path.exists('GloVe_' + self.dataset + '.npy'):
       self.load_GloVe()
-    embed_matrix = np.load('GloVe.npy')
+    embed_matrix = np.load('GloVe_' + self.dataset + '.npy')
     self.Embed = Embedding(input_dim = self.Vocab,
                            output_dim = self.EmbeddingSize,
                            input_length = self.SentMaxLen,
@@ -263,20 +273,23 @@ class AttentionAlignmentModel:
     Final = Dense(300,
                   kernel_regularizer=l2(self.L2Strength),
                   bias_regularizer=l2(self.L2Strength),
-                  name='dense300',
+                  name='dense300_' + self.dataset,
                   activation='tanh')(Final)
     Final = Dropout(self.DropProb / 2)(Final)
-    Final = Dense(3, activation='softmax', name='judge300')(Final)
+    Final = Dense(3 if self.dataset == 'snli' else 2,
+                  activation='softmax',
+                  name='judge300_' + self.dataset)(Final)
     self.model = Model(inputs=[premise, hypothesis], outputs=Final)
 
   @time_count
   def compile_model(self):
     """ Load Possible Existing Weights and Compile the Model """
     self.model.compile(optimizer=self.Optimizer,
-                       loss='categorical_crossentropy',
-                       metrics=['accuracy'])
+                       loss='mean_squared_error',
+                       metrics=['accuracy', precision, recall, f1_score]
+                       if self.dataset == 'rte' else ['accuracy'])
     self.model.summary()
-    fn = self.rnn_type + '.check'
+    fn = self.rnn_type + '_' + self.dataset + '.check'
     if os.path.exists(fn):
       self.model.load_weights(fn, by_name=True)
       print('--------Load Weights Successful!--------')
@@ -287,7 +300,9 @@ class AttentionAlignmentModel:
     callback = [EarlyStopping(patience=self.Patience),
                 ReduceLROnPlateau(patience=6, verbose=1),
                 CSVLogger(filename=self.rnn_type+'log.csv'),
-                ModelCheckpoint(self.rnn_type + '.check', save_best_only=True, save_weights_only=True)]
+                ModelCheckpoint(self.rnn_type + '_' + self.dataset + '.check',
+                                save_best_only=True,
+                                save_weights_only=True)]
 
     # 2, Train
     self.model.fit(x = [self.train[0],self.train[1]],
@@ -295,19 +310,53 @@ class AttentionAlignmentModel:
                    batch_size = self.BatchSize,
                    epochs = self.MaxEpoch,
                    validation_data=([self.validation[0], self.validation[1]], self.validation[2]),
-                   callbacks = callback,
-                   metrics = ['f1score', 'precision', 'recall'])
+                   callbacks = callback)
 
     # 3, Evaluate
-    self.model.load_weights(self.rnn_type + '.check') # revert to the best model
+    self.model.load_weights(self.rnn_type + '_' + self.dataset + '.check') # revert to the best model
     loss, acc = self.model.evaluate([self.test[0],self.test[1]],
                                     self.test[2],batch_size=self.BatchSize)
     return loss, acc # loss, accuracy on test data set
 
   def evaluate_on_test(self):
-    loss, acc = self.model.evaluate([self.test[0],self.test[1]],
-                                    self.test[2],batch_size=self.BatchSize)
-    print("Test: loss = {:.5f}, acc = {:.3f}%".format(loss,acc*100))
+    if self.dataset == 'snli':
+      loss, acc = self.model.evaluate([self.test[0],self.test[1]],
+                                      self.test[2],batch_size=self.BatchSize)
+      print("Test: loss = {:.5f}, acc = {:.3f}%".format(loss,acc*100))
+    elif self.dataset == 'rte':
+      true_posi, real_true, pred_true = 0, 0, 0
+      count, left, stime = 0, len(self.test[0]), time.time()
+      for prem, hypo, truth in zip(self.test[0], self.test[1], self.test[2]):
+      # for prem, hypo, truth in zip(self.train[0], self.train[1], self.train[2]):
+        prem = np.expand_dims(np.reshape(prem, -1), 0)
+        hypo = np.expand_dims(np.reshape(hypo, -1), 0)
+        predict = np.reshape(self.model.predict(x=[prem, hypo], batch_size=1), -1)
+        predict, truth = np.argmax(predict), np.argmax(truth)
+        if predict == truth and truth == 1:
+          true_posi += 1
+        if predict == 1:
+          pred_true += 1
+        if truth == 1:
+          real_true += 1
+        count += 1
+        if len(self.test[0]) - left >= 1024: break
+        if time.time() - stime > 1:
+          stime = time.time()
+          left -= count
+          print("{}/s | {}/{} | {:.0f} | p = {:.3f} | r = {:.3f}".format(count, len(self.test[0]) - left,
+                                                                     len(self.test[0]), left / count,
+                                                                     true_posi / pred_true,
+                                                                     true_posi / real_true))
+          count = 0
+      print("true_posi = {}, real_true = {}, pred_true = {}".format(true_posi, real_true, pred_true))
+      p, r = true_posi/pred_true, true_posi/real_true
+      print("prec = {:.4f}, recall = {:.4f}, 2pr/(p+r) = {:.4f}".format(p, r, 2*p*r/(p+r)))
+
+      # loss, acc, prec, recl, f1 = self.model.evaluate([self.test[0],self.test[1]],
+      #                                 self.test[2],batch_size=self.BatchSize)
+      # print('Test/ loss = {:.5f}, acc = {:.5f}, prec = {:.5f}, recall = {:.5f}, f1 = {:.5f}'
+      #   .format(loss, acc, prec, recl, f1))
+
 
   @staticmethod
   def plotHeatMap(df, psize=(8,8), filename='Heatmap'):
@@ -319,7 +368,7 @@ class AttentionAlignmentModel:
     plt.clf()
 
   def interactive_predict(self, test_mode = False):
-    """ The model must be compiled before execuation """
+    """[ONLY WORK FOR SNLI] The model must be compiled before execuation """
     prep_alfa = lambda X: pad_sequences(sequences=self.indexer.texts_to_sequences(X),
                                         maxlen=self.SentMaxLen)
     while True:
@@ -329,7 +378,7 @@ class AttentionAlignmentModel:
                                                   re.split(r'(\W)',prem) + re.split(r'(\W)',hypo)))
                           if word not in self.indexer.word_counts.keys()])
       if unknown:
-        print('[WARNING] {} Unregistered Words:{}'.format(len(unknown),unknown))
+        print('[WARNING] {}s Unregistered Words:{}'.format(len(unknown),unknown))
       prem_pad, hypo_pad = prep_alfa([prem]), prep_alfa([hypo])
       if test_mode:
         ans = self.model.predict(x=[prem_pad, hypo_pad], batch_size=1)
@@ -366,7 +415,7 @@ class AttentionAlignmentModel:
 
 
 if __name__ == '__main__':
-  md = AttentionAlignmentModel(annotation='EAM')
+  md = AttentionAlignmentModel(annotation='EAM', dataset='rte')
   md.prep_data()
   md.prep_embd()
   _test = False
@@ -375,8 +424,8 @@ if __name__ == '__main__':
   md.create_enhanced_attention_model()
   md.compile_model()
   # md.label_test_file()
-  # md.start_train()
-  md.evaluate_on_test()
+  md.start_train()
+  # md.evaluate_on_test()
   # md.interactive_predict(test_mode = _test)
 
 
