@@ -201,7 +201,6 @@ class AttentionAlignmentModel:
     if test_mode: self.model = Model(inputs=[premise,hypothesis],outputs=[Ep, Eh, final])
     else: self.model = Model(inputs=[premise, hypothesis], outputs=final)
 
-
   # TODO Enhanced LSTM Attention model by Qian Chen et al. 2016
   def create_enhanced_attention_model(self):
     # 0, (Optional) Set the upper limit of GPU memory
@@ -295,9 +294,9 @@ class AttentionAlignmentModel:
                    y = self.train[2],
                    batch_size = self.BatchSize,
                    epochs = self.MaxEpoch,
-                   #validation_data = ([self.validation[0],self.validation[1]],self.validation[2]),
                    validation_data=([self.validation[0], self.validation[1]], self.validation[2]),
-                   callbacks = callback)
+                   callbacks = callback,
+                   metrics = ['f1score', 'precision', 'recall'])
 
     # 3, Evaluate
     self.model.load_weights(self.rnn_type + '.check') # revert to the best model
