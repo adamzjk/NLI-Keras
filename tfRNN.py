@@ -8,7 +8,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from collections import defaultdict
-from RITutils import f1_score, recall, precision
+from RITutils import f1_score, recall, precision, w_categorical_crossentropy
 
 import keras
 import keras.backend as K
@@ -53,7 +53,7 @@ class AttentionAlignmentModel:
     self.Patience = 8
     self.MaxEpoch = 42
     self.SentMaxLen = 42
-    self.DropProb = 0.5
+    self.DropProb = 0.25
     self.L2Strength = 1e-5
     self.Activate = 'relu'
     self.Optimizer = 'adam'
@@ -94,7 +94,7 @@ class AttentionAlignmentModel:
 
     # 2, Prep Word Indexer: assign each word a number
     self.indexer = Tokenizer(lower=False, filters='')
-    self.indexer.fit_on_texts(self.train[0] + self.train[1])
+    self.indexer.fit_on_texts(self.train[0] + self.train[1] + self.test[0] + self.test[1])
     self.Vocab = len(self.indexer.word_counts) + 1
 
     # 3, Convert each word in sent to num and zero pad
@@ -139,8 +139,8 @@ class AttentionAlignmentModel:
                            output_dim = self.EmbeddingSize,
                            input_length = self.SentMaxLen,
                            trainable = False,
-                           weights = [embed_matrix])
-
+                           weights = [embed_matrix],
+                           name = 'embed_sum')
 
   # TODO Decomposable Attention Model by Ankur P. Parikh et al. 2016
   def create_standard_attention_model(self, test_mode = False):
@@ -207,7 +207,8 @@ class AttentionAlignmentModel:
       final = BatchNormalization()(final)
 
     # 6, Prediction by softmax
-    final = Dense(3, activation='softmax')(final)
+    final = Dense(3 if self.dataset == 'snli' else 2,
+                  activation='softmax')(final)
     if test_mode: self.model = Model(inputs=[premise,hypothesis],outputs=[Ep, Eh, final])
     else: self.model = Model(inputs=[premise, hypothesis], outputs=final)
 
@@ -285,8 +286,8 @@ class AttentionAlignmentModel:
   def compile_model(self):
     """ Load Possible Existing Weights and Compile the Model """
     self.model.compile(optimizer=self.Optimizer,
-                       loss='mean_squared_error',
-                       metrics=['accuracy', precision, recall, f1_score]
+                       loss=w_categorical_crossentropy, # 'categorical_crossentropy', # categorical_crossentropy
+                       metrics=['accuracy' , precision, recall, f1_score]
                        if self.dataset == 'rte' else ['accuracy'])
     self.model.summary()
     fn = self.rnn_type + '_' + self.dataset + '.check'
@@ -298,7 +299,7 @@ class AttentionAlignmentModel:
     """ Starts to Train the entire Model Based on set Parameters """
     # 1, Prep
     callback = [EarlyStopping(patience=self.Patience),
-                ReduceLROnPlateau(patience=6, verbose=1),
+                ReduceLROnPlateau(patience=5, verbose=1),
                 CSVLogger(filename=self.rnn_type+'log.csv'),
                 ModelCheckpoint(self.rnn_type + '_' + self.dataset + '.check',
                                 save_best_only=True,
@@ -309,14 +310,12 @@ class AttentionAlignmentModel:
                    y = self.train[2],
                    batch_size = self.BatchSize,
                    epochs = self.MaxEpoch,
-                   validation_data=([self.validation[0], self.validation[1]], self.validation[2]),
+                   validation_data=([self.test[0], self.test[1]], self.test[2]),
                    callbacks = callback)
 
     # 3, Evaluate
     self.model.load_weights(self.rnn_type + '_' + self.dataset + '.check') # revert to the best model
-    loss, acc = self.model.evaluate([self.test[0],self.test[1]],
-                                    self.test[2],batch_size=self.BatchSize)
-    return loss, acc # loss, accuracy on test data set
+    self.evaluate_on_test()
 
   def evaluate_on_test(self):
     if self.dataset == 'snli':
@@ -415,13 +414,13 @@ class AttentionAlignmentModel:
 
 
 if __name__ == '__main__':
-  md = AttentionAlignmentModel(annotation='EAM', dataset='rte')
+  md = AttentionAlignmentModel(annotation='SAM', dataset='rte')
   md.prep_data()
   md.prep_embd()
   _test = False
   #md.create_model(test_mode = _test)
-  # md.create_contextual_attention_model(returnEpEh=True)
-  md.create_enhanced_attention_model()
+  md.create_standard_attention_model()
+  # md.create_enhanced_attention_model()
   md.compile_model()
   # md.label_test_file()
   md.start_train()
