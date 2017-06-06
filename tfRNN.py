@@ -28,10 +28,6 @@ from keras.backend.tensorflow_backend import set_session
 from keras.engine.topology import Layer
 
 
-"""
-T T
-"""
-
 
 def time_count(fn):
   # Funtion wrapper used to memsure time consumption
@@ -49,14 +45,14 @@ class AttentionAlignmentModel:
     # 1, Set Basic Model Parameters
     self.Layers = 1
     self.EmbeddingSize = 300
-    self.BatchSize = 256
+    self.BatchSize = 512
     self.Patience = 8
     self.MaxEpoch = 42
     self.SentMaxLen = 42
-    self.DropProb = 0.25
+    self.DropProb = 0.4
     self.L2Strength = 1e-5
     self.Activate = 'relu'
-    self.Optimizer = 'adam'
+    self.Optimizer = 'rmsprop'
     self.rnn_type = annotation
     self.dataset = dataset
 
@@ -94,7 +90,7 @@ class AttentionAlignmentModel:
 
     # 2, Prep Word Indexer: assign each word a number
     self.indexer = Tokenizer(lower=False, filters='')
-    self.indexer.fit_on_texts(self.train[0] + self.train[1] + self.test[0] + self.test[1])
+    self.indexer.fit_on_texts(self.train[0] + self.train[1]) # todo remove test
     self.Vocab = len(self.indexer.word_counts) + 1
 
     # 3, Convert each word in sent to num and zero pad
@@ -140,7 +136,7 @@ class AttentionAlignmentModel:
                            input_length = self.SentMaxLen,
                            trainable = False,
                            weights = [embed_matrix],
-                           name = 'embed_sum')
+                           name = 'embed_snli')
 
   # TODO Decomposable Attention Model by Ankur P. Parikh et al. 2016
   def create_standard_attention_model(self, test_mode = False):
@@ -286,7 +282,8 @@ class AttentionAlignmentModel:
   def compile_model(self):
     """ Load Possible Existing Weights and Compile the Model """
     self.model.compile(optimizer=self.Optimizer,
-                       loss=w_categorical_crossentropy, # 'categorical_crossentropy', # categorical_crossentropy
+                       loss=w_categorical_crossentropy if self.dataset == 'rte'
+                       else 'categorical_crossentropy',
                        metrics=['accuracy' , precision, recall, f1_score]
                        if self.dataset == 'rte' else ['accuracy'])
     self.model.summary()
@@ -321,7 +318,7 @@ class AttentionAlignmentModel:
     if self.dataset == 'snli':
       loss, acc = self.model.evaluate([self.test[0],self.test[1]],
                                       self.test[2],batch_size=self.BatchSize)
-      print("Test: loss = {:.5f}, acc = {:.3f}%".format(loss,acc*100))
+      print("Test: loss = {:.5f}, acc = {:.3f}%".format(loss, acc))
     elif self.dataset == 'rte':
       true_posi, real_true, pred_true = 0, 0, 0
       count, left, stime = 0, len(self.test[0]), time.time()
@@ -351,11 +348,38 @@ class AttentionAlignmentModel:
       p, r = true_posi/pred_true, true_posi/real_true
       print("prec = {:.4f}, recall = {:.4f}, 2pr/(p+r) = {:.4f}".format(p, r, 2*p*r/(p+r)))
 
-      # loss, acc, prec, recl, f1 = self.model.evaluate([self.test[0],self.test[1]],
-      #                                 self.test[2],batch_size=self.BatchSize)
-      # print('Test/ loss = {:.5f}, acc = {:.5f}, prec = {:.5f}, recall = {:.5f}, f1 = {:.5f}'
-      #   .format(loss, acc, prec, recl, f1))
-
+  def evaluate_rte_by_snli_model(self, threshold = 0.5):
+    assert self.dataset == 'snli'
+    def padding(x, MaxLen):
+      return pad_sequences(sequences=self.indexer.texts_to_sequences(x), maxlen=MaxLen)
+    def pad_data(x):
+      return padding(x[0], self.SentMaxLen), padding(x[1], self.SentMaxLen), x[2]
+    test_data = pad_data(json.loads(open('RTE_test.json', 'r').read()))
+    true_posi, real_true, pred_true = 0, 0, 0
+    count, left, stime = 0, len(self.test[0]), time.time()
+    for prem, hypo, truth in zip(test_data[0], test_data[1], test_data[2]):
+      prem = np.expand_dims(prem, 0)
+      hypo = np.expand_dims(hypo, 0)
+      ans = np.reshape(self.model.predict(x=[prem, hypo], batch_size=1), -1)  # PREDICTION
+      ans = np.delete(ans, 1, 0) # delete 'neutral' output
+      e_x = np.exp(ans - np.max(ans))
+      ans = e_x / e_x.sum() # reapply softmax
+      pred_label = 1 if ans[1] > threshold else 0
+      if pred_label == 1: pred_true += 1
+      if truth == 1: real_true += 1
+      if pred_label == truth and truth == 1 : true_posi += 1
+      count += 1
+      if time.time() - stime > 1:
+        stime = time.time()
+        left -= count
+        print("{}/s | {}/{} | {:.0f} | p = {:.3f} | r = {:.3f}".format(count, len(self.test[0]) - left,
+                                                                       len(self.test[0]), left / count,
+                                                                       true_posi / pred_true,
+                                                                       true_posi / real_true))
+        count = 0
+    print("true_posi = {}, real_true = {}, pred_true = {}".format(true_posi, real_true, pred_true))
+    p, r = true_posi / pred_true, true_posi / real_true
+    print("prec = {:.4f}, recall = {:.4f}, 2pr/(p+r) = {:.4f}".format(p, r, 2 * p * r / (p + r)))
 
   @staticmethod
   def plotHeatMap(df, psize=(8,8), filename='Heatmap'):
@@ -414,17 +438,18 @@ class AttentionAlignmentModel:
 
 
 if __name__ == '__main__':
-  md = AttentionAlignmentModel(annotation='SAM', dataset='rte')
+  md = AttentionAlignmentModel(annotation='EAM', dataset='snli')
   md.prep_data()
   md.prep_embd()
   _test = False
   #md.create_model(test_mode = _test)
-  md.create_standard_attention_model()
-  # md.create_enhanced_attention_model()
+  # md.create_standard_attention_model()
+  md.create_enhanced_attention_model()
   md.compile_model()
   # md.label_test_file()
-  md.start_train()
+  # md.start_train()
   # md.evaluate_on_test()
+  md.evaluate_rte_by_snli_model(threshold=0.4)
   # md.interactive_predict(test_mode = _test)
 
 

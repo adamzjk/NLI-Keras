@@ -32,7 +32,6 @@ def w_categorical_crossentropy(y_true, y_pred):
     K.cast(y_true[:, c_t],K.floatx()))
   return K.categorical_crossentropy(y_pred, y_true) * final_mask
 
-
 def precision(y_true, y_pred):
   y_true, y_pred = K.argmax(y_true, axis=1), K.argmax(y_pred, axis=1)
   y_true, y_pred = K.cast(y_true, 'float32'), K.cast(y_pred, 'float32')
@@ -53,7 +52,6 @@ def f1_score(y_true, y_pred):
   # If there are no true positives, fix the F score at 0 like sklearn.
   if K.sum(K.round(K.clip(y_true, 0, 1))) == 0:
       return 0
-
   p = precision(y_true, y_pred)
   r = recall(y_true, y_pred)
   fscore = 2 * (p * r) / (p + r + K.epsilon())
@@ -102,6 +100,8 @@ def merge_data_with_snli():
     rtrn[2].append(label)
 
   open('RTE_train.json', 'w').write(json.dumps(rtrn))
+
+
 
 if __name__ == '__main__':
   # save_train_data('RTE/RTE_train.txt')
