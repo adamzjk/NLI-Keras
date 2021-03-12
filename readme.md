@@ -39,9 +39,5 @@ python3 tfRNN.py
 
 ​	Function ``interactive_predict`` let user input 2 sentences and return 3 probabilities w.r.t. entailment, contradiction and neutral. If ``test_mode`` is set, then the attention visualization heatmap will also be saved as file.
 
-## Resources
-
-​	If you need preprocessed data, compressed GloVe word embeddings, well-trained weights, please contact adamzjk@foxmail.com
-
 
 
